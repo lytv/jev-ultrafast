@@ -99,8 +99,21 @@
   const omitted_actions=Math.max(0,actions.length-250);
   actions.splice(250);
   actions.forEach((a,i)=>a.id='e'+(i+1));
-  if (scrollY+innerHeight<height-2) actions.push({id:'scroll_down',kind:'scroll',label:'Scroll down',delta:560});
-  if (scrollY>0) actions.push({id:'scroll_up',kind:'scroll',label:'Scroll up',delta:-560});
+  const pageDown=scrollY+innerHeight<height-2, pageUp=scrollY>0;
+  let nestDown=false, nestUp=false;
+  for (const e of document.querySelectorAll('div,section,main,article,aside,form')) {
+    if (!(e instanceof HTMLElement) || e.scrollHeight<=e.clientHeight+10) continue;
+    let overflow='';
+    try { overflow=getComputedStyle(e).overflowY; } catch(_) { continue; }
+    if (!/(auto|scroll)/.test(overflow)) continue;
+    const r=e.getBoundingClientRect();
+    if (r.width<=0 || r.height<=0 || r.bottom<=0 || r.top>=innerHeight || r.right<=0 || r.left>=innerWidth) continue;
+    if (e.scrollTop+e.clientHeight<e.scrollHeight-2) nestDown=true;
+    if (e.scrollTop>2) nestUp=true;
+    if (nestDown && nestUp) break;
+  }
+  if (pageDown || nestDown) actions.push({id:'scroll_down',kind:'scroll',label:'Scroll down',delta:560});
+  if (pageUp || nestUp) actions.push({id:'scroll_up',kind:'scroll',label:'Scroll up',delta:-560});
   actions.push({id:'wait',kind:'wait',label:'Wait for the page to update'});
   return {url:location.href,title:document.title,w:innerWidth,h:innerHeight,text,
     scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};

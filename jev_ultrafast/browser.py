@@ -136,7 +136,38 @@ def browser_operation(request):
         action = request["action"]
         kind = action["kind"]
         if kind == "scroll":
-            call("Input.dispatchMouseEvent", type="mouseWheel", x=550, y=650, deltaX=0, deltaY=action["delta"])
+            # Wheel events do not move owned background tabs, so scroll explicitly:
+            # the window when the page can move that way, else the largest visible
+            # nested container that can. The wheel dispatch stays as a last resort.
+            state = evaluate(
+                "(delta => {"
+                " const pageCan=delta>0"
+                " ? scrollY+innerHeight<document.documentElement.scrollHeight-2"
+                " : scrollY>2;"
+                " if(pageCan){ scrollBy(0,delta); return {pageCan:true,nested:false}; }"
+                " const els=[...document.querySelectorAll("
+                " 'div,section,main,article,aside,form')];"
+                " els.sort((a,b)=>(b.clientWidth*b.clientHeight)"
+                "  -(a.clientWidth*a.clientHeight));"
+                " for(const e of els){"
+                "  try{"
+                "   if(!(e instanceof HTMLElement)"
+                "    ||e.scrollHeight<=e.clientHeight+10) continue;"
+                "   if(!/(auto|scroll)/.test(getComputedStyle(e).overflowY)) continue;"
+                "   const r=e.getBoundingClientRect();"
+                "   if(r.width<=0||r.height<=0||r.bottom<=0||r.top>=innerHeight"
+                "     ||r.right<=0||r.left>=innerWidth) continue;"
+                "   if(delta>0&&e.scrollTop+e.clientHeight>=e.scrollHeight-2) continue;"
+                "   if(delta<0&&e.scrollTop<=2) continue;"
+                "   e.scrollTop+=delta; return {pageCan:false,nested:true};"
+                "  }catch(_){}"
+                " }"
+                " return {pageCan:false,nested:false};"
+                "})(" + json.dumps(action["delta"]) + ")"
+            )
+            if not state["pageCan"] and not state["nested"]:
+                call("Input.dispatchMouseEvent", type="mouseWheel",
+                     x=550, y=650, deltaX=0, deltaY=action["delta"])
         elif kind != "wait":
             if type(action["node"]) is not int:
                 raise ValueError("Invalid observed node")
