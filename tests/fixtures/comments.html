@@ -1,0 +1,54 @@
+<!doctype html>
+<title>Synthetic issue</title>
+<style>
+body { margin: 0; font: 16px system-ui; }
+header { height: 60px; }
+#entry { position: relative; }
+#placeholder { width: 100%; height: 90px; text-align: left; padding: 8px; }
+#quick { position: absolute; top: 32px; left: 0; right: 0; height: 58px; background: #ddd; }
+#panel { height: 600px; overflow-y: auto; }
+#details { height: 900px; }
+#composer { margin: 16px; }
+#editor { min-height: 80px; border: 1px solid; }
+</style>
+<header>Synthetic issue <span id="activity">Activity 0</span><div><input aria-label="Search"></div></header>
+<main id="panel">
+  <section id="details">Issue details. Comments are below.</section>
+  <section id="composer">
+    <h2>Comments</h2>
+    <div id="entry">
+      <button id="placeholder">Add a comment</button>
+      <div id="quick" role="group" aria-label="Quick comments">Quick comments</div>
+    </div>
+    <button id="save" disabled>Save</button>
+    <ul id="comments"></ul>
+    <button id="reply" onclick="placeholder.scrollIntoView()">Reply</button>
+  </section>
+</main>
+<script>
+let editor;
+const placeholder = document.getElementById('placeholder');
+const save = document.getElementById('save');
+placeholder.onclick = () => {
+  document.getElementById('entry').hidden = true;
+  // The placeholder disappears before the editor mounts and receives focus.
+  setTimeout(() => {
+    editor = document.createElement('div');
+    editor.id = 'editor';
+    editor.contentEditable = 'true';
+    editor.setAttribute('role', 'textbox');
+    editor.setAttribute('aria-label', 'Comment');
+    document.getElementById('entry').after(editor);
+    editor.focus({preventScroll: true});
+    editor.oninput = () => { save.disabled = !editor.innerText.trim(); };
+  }, 200);
+};
+save.onclick = () => {
+  const comment = document.createElement('li');
+  comment.textContent = editor.innerText.trim();
+  document.getElementById('comments').append(comment);
+  editor.remove();
+  save.disabled = true;
+  document.getElementById('entry').hidden = false;
+};
+</script>

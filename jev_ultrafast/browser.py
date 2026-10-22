@@ -53,14 +53,20 @@ class Browser:
                       const autocomplete=action.kind==='fill' && field?.getAttribute('role')==='combobox';
                       let frames=0, stopped=false;
                       const finish=()=>{stopped=true;resolve()};
-                      setTimeout(finish,autocomplete ? 200 : 50);
+                      setTimeout(finish,action.kind==='click' ? 1000 : autocomplete ? 200 : 50);
                       const ready=()=>{
                         if (stopped) return;
                         const ids=(field?.getAttribute('aria-controls')||field?.getAttribute('aria-owns')||'')
                           .split(/\\s+/).filter(Boolean);
                         const roots=ids.length ? ids.map(id=>document.getElementById(id)).filter(Boolean) : [document];
                         const options=roots.flatMap(root=>[...root.querySelectorAll('[role="option"]')]);
-                        if (++frames>=2 && (!autocomplete || options.some(e=>{
+                        const opening=action.kind==='click' && field &&
+                          (!field.isConnected || !field.checkVisibility({checkVisibilityCSS:true}));
+                        const active=document.activeElement;
+                        const editorReady=active &&
+                          (active.isContentEditable || active.matches('input,textarea,select')) &&
+                          active.checkVisibility({checkVisibilityCSS:true}) && window.__jevFast?.point(active);
+                        if (++frames>=2 && (!opening || editorReady) && (!autocomplete || options.some(e=>{
                           const r=e.getBoundingClientRect();
                           return r.width && r.height && r.bottom>0 && r.top<innerHeight &&
                             e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true});
@@ -86,7 +92,7 @@ class Browser:
         raise StalePage("Page did not settle")
 
     def fresh(self, page, action=None):
-        if action is not None and action["kind"] in {"click", "select"}:
+        if action is not None and action["kind"] in {"click", "select", "fill"}:
             node = action["node"]
             if type(node) is not int:
                 return False
@@ -97,14 +103,33 @@ class Browser:
             return current == [page["page_key"], page["guards"].get(str(node))]
         return self.evaluate(MARKER) == page["marker"]
 
+    def revalidate(self, page, action):
+        # Only text drift may reuse a nonterminal decision; never remap a changed action space.
+        def semantics(actions):
+            return [{k: v for k, v in a.items() if k != "rect"} for a in actions]
+
+        for _ in range(2):
+            current = self.observe(screenshot=False)
+            if (current["page_key"] != page["page_key"] or current["title"] != page["title"]
+                    or current["scroll"] != page["scroll"] or current["guards"] != page["guards"]
+                    or semantics(current["actions"]) != semantics(page["actions"])):
+                break
+            if self.fresh(current, action):
+                return current
+        raise StalePage("Page or action space changed since this decision. Observe again.")
+
     def act(self, action, page, text=None):
+        revalidated = False
         if not self.fresh(page, action):
-            raise StalePage("Page changed since this decision. Observe again.")
+            if action["kind"] not in {"scroll", "wait"}:
+                raise StalePage("Page changed since this decision. Observe again.")
+            page = self.revalidate(page, action)
+            revalidated = True
         if action["kind"] == "wait":
             time.sleep(0.1)
         result = browser_operation({"operation": "act", "session": self.session, "action": action, "text": text})
         self.after_input = action if action["kind"] != "wait" else None
-        return result
+        return {**result, "revalidated": revalidated}
 
     def close(self):
         if self.target:
@@ -176,10 +201,10 @@ def browser_operation(request):
               const e=window.__jevFast?.nodes.get(action.node);
               if (!e?.isConnected || e.matches(':disabled') || e.closest('[aria-disabled="true"],[inert]') ||
                   !e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true})) return null;
-              if (action.kind==='fill' && (e.readOnly || e.getAttribute('aria-readonly')==='true')) return null;
-              const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2;
-              if (!r.width || !r.height || x<0 || y<0 || x>=innerWidth || y>=innerHeight) return null;
-              if (!e.contains(document.elementFromPoint(x,y))) return null;
+              if (action.kind==='fill' && (e.readOnly || e.getAttribute('aria-readonly')==='true' ||
+                  !(e.isContentEditable || ['INPUT','TEXTAREA'].includes(e.tagName)))) return null;
+              const point=window.__jevFast.point(e);
+              if (!point) return null;
               if (action.kind==='select') {
                 if (e.tagName!=='SELECT' || ![...e.options].some(o=>o.value===action.value &&
                     !o.disabled && !o.closest('optgroup[disabled]'))) return null;
@@ -187,7 +212,7 @@ def browser_operation(request):
                 e.dispatchEvent(new Event('input',{bubbles:true}));
                 e.dispatchEvent(new Event('change',{bubbles:true}));
               }
-              return {x,y};
+              return point;
             })(""" + json.dumps(action) + ")")
             if target is None:
                 if kind == "select":

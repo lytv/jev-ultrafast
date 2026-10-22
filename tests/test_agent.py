@@ -17,6 +17,9 @@ def page():
         "url": "https://example.test/",
         "title": "Search",
         "text": "Search",
+        "page_key": ["document", "https://example.test/"],
+        "marker": ["original marker"],
+        "guards": {"10": ["field", "unchanged"], "20": ["submit", "unchanged"]},
         "scroll": {"y": 0},
         "actions": [
             {"id": "e1", "kind": "fill", "label": "Search", "role": "textbox", "value": "", "node": 10},
@@ -209,6 +212,18 @@ def test_changed_field_context_does_not_reuse_generated_text(runner, monkeypatch
     runner.state["decision"] = decision()
     runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
     assert helper.call_count == 2
+
+
+@pytest.mark.parametrize("selected", ["DONE", "BLOCKED"])
+def test_terminal_decision_still_requires_full_page_stillness(runner, selected):
+    runner.state["decision"] = decision(selected)
+    runner.state["browser"].fresh.return_value = False
+    with pytest.raises(StalePage):
+        runner.command("act", {"fingerprint": runner.state["page"]["fingerprint"]})
+    runner.state["browser"].fresh.assert_called_once_with(runner.state["page"])
+    runner.state["browser"].act.assert_not_called()
+    assert runner.state["stale_discards"] == {"terminal": 1}
+    assert runner.state["decision"] is None
 
 
 def test_loading_waits_do_not_trigger_no_progress_stop(runner):

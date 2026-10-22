@@ -9,6 +9,18 @@
   const safe = e => !['password','file','hidden'].includes(e.type);
   const visible = e => !e.closest('[aria-hidden="true"],[inert]') &&
     e.checkVisibility({checkOpacity:true,checkVisibilityCSS:true});
+  cache.point=e=>{
+    const r=e.getBoundingClientRect();
+    const left=Math.max(0,r.left), top=Math.max(0,r.top);
+    const width=Math.min(innerWidth,r.right)-left, height=Math.min(innerHeight,r.bottom)-top;
+    if (width<=0 || height<=0) return null;
+    // A sibling overlay can cover the center while an exposed part is still actionable.
+    for (const [fx,fy] of [[.5,.5],[.5,.15],[.15,.15],[.85,.15],[.15,.5],[.85,.5],[.5,.85],[.15,.85],[.85,.85]]) {
+      const x=left+width*fx, y=top+height*fy;
+      if (e.contains(document.elementFromPoint(x,y))) return {x,y};
+    }
+    return null;
+  };
   const name = (e,seen=new Set()) => {
     if (!e || seen.has(e)) return '';
     seen.add(e);
@@ -23,7 +35,7 @@
   };
   const roles=['button','link','checkbox','radio','switch','tab','menuitem','menuitemradio',
     'option','gridcell','combobox','textbox','searchbox','spinbutton'];
-  const selector='a[href],button,input,textarea,select,summary,[contenteditable="true"],'+
+  const selector='a[href],button,input,textarea,select,summary,[contenteditable]:not([contenteditable="false"]),'+
     roles.map(role=>'[role="'+role+'"]').join(',');
   const role = e => {
     const explicit=e.getAttribute('role');
@@ -45,18 +57,20 @@
     [...document.querySelectorAll('input,textarea,select')].filter(safe)
       .map(e=>[identity(e),e.value,e.checked,e.selectedIndex,e.disabled,e.readOnly])];
   cache.guard=e=>{
-    if (!e?.isConnected || !visible(e)) return null;
+    if (!e?.isConnected || !safe(e) || !visible(e)) return null;
     const scope=e.closest('form,dialog,[role="dialog"],article,li,tr,[role="row"]') || e.parentElement;
-    return [identity(e),role(e),name(e),e.value??null,e.checked??null,e.selectedIndex??null,
-      e.readOnly??null,e.matches(':disabled'),e.getAttribute('aria-disabled'),
+    return [identity(e),role(e),name(e),e.value??(e.isContentEditable?e.innerText:null),
+      e.checked??null,e.selectedIndex??null,
+      e.readOnly??null,e.getAttribute('aria-readonly'),e.isContentEditable,
+      e.matches(':disabled'),e.getAttribute('aria-disabled'),
       e.getAttribute('aria-expanded'),e.getAttribute('aria-checked'),e.getAttribute('aria-selected'),
       e.getAttribute('href'),scope?.innerText?.slice(0,6000)||''];
   };
   const actions=[];
   for (const e of document.querySelectorAll(selector)) {
     if (!safe(e) || !visible(e) || e.matches(':disabled') || e.closest('[aria-disabled="true"]')) continue;
-    const r=e.getBoundingClientRect(), x=r.x+r.width/2, y=r.y+r.height/2, rname=role(e);
-    if (!rname || r.width<=0 || r.height<=0 || x<0 || y<0 || x>=innerWidth || y>=innerHeight) continue;
+    const r=e.getBoundingClientRect(), rname=role(e);
+    if (!rname || !cache.point(e)) continue;
     if (rname==='gridcell' && e.querySelector('button,[role="button"]')) continue;
     const base={node:identity(e),role:rname,label:name(e)||rname,
       rect:{x:r.x,y:r.y,w:r.width,h:r.height}};
@@ -71,6 +85,7 @@
           current_value:[...e.selectedOptions].map(o=>o.label).join(', '),label:base.label+' → '+o.label});
     } else {
       const editable=!e.readOnly && e.getAttribute('aria-readonly')!=='true' &&
+        (e.isContentEditable || ['INPUT','TEXTAREA'].includes(e.tagName)) &&
         (['textbox','searchbox','spinbutton'].includes(rname) ||
           (rname==='combobox' && ['INPUT','TEXTAREA'].includes(e.tagName)));
       const value='value' in e ? String(e.value) :
@@ -101,6 +116,7 @@
   actions.forEach((a,i)=>a.id='e'+(i+1));
   const pageDown=scrollY+innerHeight<height-2, pageUp=scrollY>0;
   let nestDown=false, nestUp=false;
+  const nestedScroll=[];
   for (const e of document.querySelectorAll('div,section,main,article,aside,form')) {
     if (!(e instanceof HTMLElement) || e.scrollHeight<=e.clientHeight+10) continue;
     let overflow='';
@@ -108,13 +124,14 @@
     if (!/(auto|scroll)/.test(overflow)) continue;
     const r=e.getBoundingClientRect();
     if (r.width<=0 || r.height<=0 || r.bottom<=0 || r.top>=innerHeight || r.right<=0 || r.left>=innerWidth) continue;
+    nestedScroll.push([identity(e),e.scrollTop,e.scrollLeft]);
     if (e.scrollTop+e.clientHeight<e.scrollHeight-2) nestDown=true;
     if (e.scrollTop>2) nestUp=true;
-    if (nestDown && nestUp) break;
   }
   if (pageDown || nestDown) actions.push({id:'scroll_down',kind:'scroll',label:'Scroll down',delta:560});
   if (pageUp || nestUp) actions.push({id:'scroll_up',kind:'scroll',label:'Scroll up',delta:-560});
   actions.push({id:'wait',kind:'wait',label:'Wait for the page to update'});
+  marker.push(nestedScroll);
   return {url:location.href,title:document.title,w:innerWidth,h:innerHeight,text,
-    scroll:{y:scrollY,height},actions,marker,page_key,guards,omitted_actions};
+    scroll:{y:scrollY,height,nested:nestedScroll},actions,marker,page_key,guards,omitted_actions};
 })()
