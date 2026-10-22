@@ -10,6 +10,9 @@ Submit populated search fields before opening a result; a populated field alone 
 WAIT only when the needed control is absent/disabled, or submitted results are still loading.
 If Search/Submit is visible and the required fields are ready, CLICK it immediately.
 Recent WAIT actions are not evidence of loading. Prefer a useful visible control over WAIT.
+If a needed field is absent, SCROLL to reveal more controls before declaring BLOCKED.
+Some editors mount only after a CLICK on their placeholder. WAIT for the editable target if it still loads.
+Never use an unrelated field instead of a missing editor. Fill the editor before its submit button enables.
 DONE requires visible evidence that ALL requirements are satisfied. If asked to open a result,
 a matching link is not enough. BLOCKED means no supported operation can make progress."""
 

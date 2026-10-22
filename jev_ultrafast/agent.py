@@ -35,6 +35,9 @@ class Agent:
             plan_index=0,
             decisions=[],
             text_calls=[],
+            stale_discards={},
+            stale_revalidations={},
+            page_refreshes=0,
             elapsed_ms=0,
             started_at=None,
             record=bool(self.record_dir),
@@ -48,6 +51,10 @@ class Agent:
             **{k: v for k, v in self.state.items() if k != "browser"},
             "elements": action_space(self.state["page"]["actions"])[0],
         }
+
+    def count_stale(self, gate, *, revalidated=False):
+        counts = self.state.setdefault("stale_revalidations" if revalidated else "stale_discards", {})
+        counts[gate] = counts.get(gate, 0) + 1
 
     def command(self, name, body=None):
         body = body or {}
@@ -68,6 +75,7 @@ class Agent:
             if state["started_at"] is None:
                 state["started_at"] = time.perf_counter()
             if not state["browser"].fresh(state["page"]):
+                state["page_refreshes"] = state.get("page_refreshes", 0) + 1
                 state["page"] = state["browser"].observe(screenshot=self.screenshots)
             state["decision"] = None
             if state["status"] in {"done", "blocked"}:
@@ -92,6 +100,7 @@ class Agent:
             selected = decision["choice"]
             if selected in {"DONE", "BLOCKED"}:
                 if not state["browser"].fresh(page):
+                    self.count_stale("terminal")
                     state["status"] = "ready"
                     raise StalePage("Page changed since the decision. Choose again.")
                 state["status"] = "done" if selected == "DONE" else "blocked"
@@ -104,8 +113,9 @@ class Agent:
                 raise ValueError(f"Stopped at the {MAX_STEPS}-action demo budget")
             text, helper = None, None
             if action["kind"] == "fill":
-                if not state["browser"].fresh(page):
-                    raise StalePage("Page changed before text generation. Choose again.")
+                if not state["browser"].fresh(page, action):
+                    self.count_stale("pre_text")
+                    raise StalePage("Target changed before text generation. Choose again.")
                 context = field_context(state["goal"], action, page, state["history"])
                 if self.pending_text and self.pending_text[0] == context:
                     _, text, helper = self.pending_text
@@ -114,7 +124,13 @@ class Agent:
                     self.pending_text = (context, text, helper)
                     state["text_calls"].append({**helper, "field": action["label"], "value": text})
             # Browser.act checks freshness immediately before input, including after text generation.
-            state["browser"].act(action, page, text=text)
+            try:
+                result = state["browser"].act(action, page, text=text)
+            except StalePage:
+                self.count_stale("pre_input")
+                raise
+            if isinstance(result, dict) and result.get("revalidated"):
+                self.count_stale("pre_input", revalidated=True)
             self.pending_text = None
             state["elapsed_ms"] = round((time.perf_counter() - state["started_at"]) * 1000)
             # Record execution before observing. A stale post-action observation must not erase the action.
